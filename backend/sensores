@@ -1,0 +1,116 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <DHT.h>
+#include <Wire.h>
+#include <Adafruit_SSD1306.h>
+
+// Credenciales WiFi
+const char* ssid = "INFINITUM1138";
+const char* password = "fdAJPff2Fb";
+const char* serverUrl = "http://192.168.1.68/inteligenthouse/backend/alerta.php"; 
+
+// Definición de pines y sensores
+#define PIR_SENSOR 5
+#define DHTPIN 4
+#define DHTTYPE DHT11
+#define LDR_PIN 34
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+// Inicialización de sensores y pantalla
+DHT dht(DHTPIN, DHTTYPE);
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+void setup() {
+    Serial.begin(115200);
+    Wire.begin(21, 22);  // Pines I2C ESP32
+
+    // Conectar a WiFi
+    WiFi.begin(ssid, password);
+    Serial.print("Conectando a WiFi...");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.print(".");
+    }
+    Serial.println("\nConectado a WiFi");
+
+    // Inicializar sensores
+    dht.begin();
+    pinMode(PIR_SENSOR, INPUT);
+
+    // Inicializar pantalla OLED
+    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {  
+        Serial.println("Error al inicializar OLED");
+        while (true);
+    }
+
+    // Mostrar mensaje de inicio
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println("Sistema iniciado...");
+    display.display();
+    delay(2000);
+}
+
+void loop() {
+    int movimiento = digitalRead(PIR_SENSOR);
+    float temperatura = dht.readTemperature();
+    float humedad = dht.readHumidity();
+    int luz = analogRead(LDR_PIN);
+
+    // Mostrar datos en OLED
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println("Sensores:");
+    
+    display.setCursor(0, 10);
+    display.print("Mov: ");
+    display.println(movimiento ? "Si" : "No");
+    
+    display.setCursor(0, 20);
+    display.print("Temp: ");
+    display.print(temperatura);
+    display.println(" C");
+
+    display.setCursor(0, 30);
+    display.print("Hum: ");
+    display.print(humedad);
+    display.println(" %");
+
+    display.setCursor(0, 40);
+    display.print("Luz: ");
+    display.println(luz);
+
+    display.display();  // ⚠️ Importante para actualizar la pantalla
+
+    // Enviar datos al servidor
+    if (movimiento) enviarDatos("S001", "Infrarrojo", 1, "Detectado");
+    if (!isnan(temperatura)) enviarDatos("S002", "Temperatura", temperatura, "Celsius");
+    if (!isnan(humedad)) enviarDatos("S003", "Humedad", humedad, "%");
+    enviarDatos("S006", "Fotorresistencia", luz, "Intensidad");
+
+    delay(5000);
+}
+
+void enviarDatos(String sensor_id, String sensor, float valor, String unidad) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        http.begin(serverUrl);
+        http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+        String datos = "sensor_id=" + sensor_id + "&sensor=" + sensor + "&valor=" + String(valor) + "&unidad=" + unidad;
+        Serial.println("Enviando datos: " + datos);
+        int codigoRespuesta = http.POST(datos);
+
+        if (codigoRespuesta > 0) {
+            Serial.println("Datos enviados correctamente");
+        } else {
+            Serial.println("Error enviando datos");
+        }
+        http.end();
+    }
+}
